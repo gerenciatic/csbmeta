@@ -1,23 +1,26 @@
 <?php
-require_once 'includes/config.php';
-require_once 'includes/conexsql.php';
+session_start();
+date_default_timezone_set('America/Caracas');
+header('Content-Type: application/json');
+
+// Incluir conexión
+include 'includes/conexsql.php';
 
 // Función para respuesta estandarizada
 function sendResponse($success, $data = [], $message = '') {
     $response = [
         'success' => $success,
         'message' => $message,
-        'timestamp' => date('Y-m-d H:i:s')
+        'data' => $data,
+        'timestamp' => date('Y-m-d H:i:s'),
+        'debug' => [
+            'empresa' => $_SESSION['empresa_seleccionada'] ?? 'A',
+            'basededatos' => $GLOBALS['basededatos'] ?? 'REPORT'
+        ]
     ];
     
-    if ($success) {
-        $response['data'] = $data;
-    } else {
-        $response['error'] = $data;
-    }
-    
     echo json_encode($response, JSON_UNESCAPED_UNICODE | JSON_NUMERIC_CHECK);
-    exit();
+    exit;
 }
 
 // Función para ejecutar consultas seguras
@@ -39,24 +42,25 @@ function executeQuery($conn, $sql, $params = []) {
 
 // Función para obtener datos de ventas
 function getSalesData($conn, $year, $month, $vendor = 'all') {
-    $sql = "SELECT
-        VA.B002200CVE as vendor,
-        VA.B002201CPR as product,
-        VA.KILO as kg,
-        VA.UNIDAD_VENDIDA as quantity,
-        VA.TOTAL_VTA_DIVISA_DES as total,
-        VA.CAJAS_ESTADISTICAS as boxes,
-        VA.MES as month,
-        VA.ANNO as year,
-        VA.B002200RSO as customer_name,
-        VA.B002200CCL as customer_code,
-        CONVERT(VARCHAR(10), VA.B002200FEC, 120) as date,
-        VA.B002200DOC as doc,
-        VA.B002201CLS as category
-    FROM dbo.VENTA_ACUMULADA VA
-    WHERE VA.ANNO = ? 
-      AND VA.MES = ?
-      AND VA.B002200CVE NOT IN ('01', '')";
+    // CONSULTA PRINCIPAL CON LAS COLUMNAS CORRECTAS
+    $sql = "SELECT 
+            VA.B002200CVE as vendor,
+            VA.B002201CPR as product,
+            VA.KILO as kg,
+            VA.UNIDAD_VENDIDA as quantity,
+            VA.TOTAL_VTA_DIVISA_DES as total,
+            VA.CAJAS_ESTADISTICAS as boxes,
+            VA.MES as month,
+            VA.ANNO as year,
+            VA.B002200RSO as customer_name,
+            VA.B002200CCL as customer_code,
+            CONVERT(VARCHAR(10), VA.B002200FEC, 120) as date,
+            VA.B002200DOC as doc,
+            VA.B002201CLS as category
+        FROM VENTA_ACUMULADA VA
+        WHERE VA.ANNO = ? 
+          AND VA.MES = ?
+          AND VA.B002200CVE NOT IN ('01', '')";
     
     $params = [$year, $month];
     
@@ -65,7 +69,7 @@ function getSalesData($conn, $year, $month, $vendor = 'all') {
         $params[] = $vendor;
     }
     
-    $sql .= " ORDER BY VA.B002200FEC DESC, VA.B002200CVE";
+    $sql .= " ORDER BY VA.B002200FEC DESC";
     
     $stmt = executeQuery($conn, $sql, $params);
     $salesData = [];
@@ -104,15 +108,20 @@ function getQuotasData($conn, $year, $month, $vendor = 'all') {
     
     $sql .= " ORDER BY CODIGO_VENDEDOR";
     
-    $stmt = executeQuery($conn, $sql, $params);
-    $quotasData = [];
-    
-    while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
-        $quotasData[] = $row;
+    try {
+        $stmt = executeQuery($conn, $sql, $params);
+        $quotasData = [];
+        
+        while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
+            $quotasData[] = $row;
+        }
+        
+        sqlsrv_free_stmt($stmt);
+        return $quotasData;
+    } catch (Exception $e) {
+        // Si la tabla no existe, retornar array vacío
+        return [];
     }
-    
-    sqlsrv_free_stmt($stmt);
-    return $quotasData;
 }
 
 // Función para obtener cuotas por categoría
@@ -127,21 +136,26 @@ function getClassQuotasData($conn, $year, $month, $vendor = 'all') {
     
     $sql .= " ORDER BY CODIGO_VENDEDOR, CLASE_PRODUCTO";
     
-    $stmt = executeQuery($conn, $sql, $params);
-    $classQuotasData = [];
-    
-    while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
-        $classQuotasData[] = $row;
+    try {
+        $stmt = executeQuery($conn, $sql, $params);
+        $classQuotasData = [];
+        
+        while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
+            $classQuotasData[] = $row;
+        }
+        
+        sqlsrv_free_stmt($stmt);
+        return $classQuotasData;
+    } catch (Exception $e) {
+        // Si la tabla no existe, retornar array vacío
+        return [];
     }
-    
-    sqlsrv_free_stmt($stmt);
-    return $classQuotasData;
 }
 
 // Función para obtener lista de vendedores
 function getVendorsList($conn, $year, $month) {
     $sql = "SELECT DISTINCT B002200CVE as vendor 
-            FROM dbo.VENTA_ACUMULADA 
+            FROM VENTA_ACUMULADA 
             WHERE ANNO = ? AND MES = ?
             AND B002200CVE NOT IN ('01', '')
             ORDER BY vendor";
@@ -159,14 +173,17 @@ function getVendorsList($conn, $year, $month) {
 
 // MANEJO PRINCIPAL DE PETICIONES
 try {
-    $conn = Database::getConnection();
+    // Verificar conexión
     if ($conn === false) {
-        sendResponse(false, [], "No se pudo conectar a la base de datos");
+        sendResponse(false, [], 'No se pudo conectar a la base de datos. Verifique la configuración.');
     }
 
     $action = $_POST['action'] ?? $_GET['action'] ?? '';
     
-    switch ($action) {
+    // Log de la acción recibida (para debugging)
+    error_log("API Action: " . $action . " - Empresa: " . ($_SESSION['empresa_seleccionada'] ?? 'A'));
+    
+    switch($action) {
         case 'get_sales_data':
             $year = $_POST['year'] ?? date('Y');
             $month = $_POST['month'] ?? date('m');
@@ -188,13 +205,13 @@ try {
                 "quotas" => $quotasData,
                 "class_quotas" => $classQuotasData,
                 "vendors" => $vendorsList,
-                "last_billing_date" => $salesResult['last_date'] ?? "No disponible",
+                "last_billing_date" => $salesResult['last_date'] ?: "No disponible",
                 "filters" => [
                     "year" => $year,
                     "month" => $month,
                     "vendor" => $vendor
                 ]
-            ], "Datos cargados correctamente");
+            ], "Datos cargados correctamente: " . count($salesResult['sales']) . " registros");
             break;
             
         case 'save_quota':
@@ -315,7 +332,30 @@ try {
         case 'change_company':
             $empresa = $_POST['empresa'] ?? 'A';
             $_SESSION['empresa_seleccionada'] = $empresa;
-            sendResponse(true, [], "Empresa cambiada a " . ($GLOBALS['empresas_config'][$empresa]['nombre'] ?? 'Desconocida'));
+            
+            $empresasNombres = [
+                'A' => 'CSB',
+                'B' => 'MAXI', 
+                'C' => 'MERIDA'
+            ];
+            
+            sendResponse(true, [], "Empresa cambiada a " . ($empresasNombres[$empresa] ?? 'Desconocida'));
+            break;
+            
+        case 'test_connection':
+            // Prueba simple de conexión
+            $test_sql = "SELECT TOP 1 B002200CVE as vendor FROM VENTA_ACUMULADA";
+            $test_stmt = executeQuery($conn, $test_sql);
+            $test_data = sqlsrv_fetch_array($test_stmt, SQLSRV_FETCH_ASSOC);
+            sqlsrv_free_stmt($test_stmt);
+            
+            sendResponse(true, [
+                'connection' => 'success',
+                'test_data' => $test_data,
+                'server' => 'SRV-PROFIT\CATA',
+                'database' => $GLOBALS['basededatos'] ?? 'REPORT',
+                'empresa' => $_SESSION['empresa_seleccionada'] ?? 'A'
+            ], "Conexión de prueba exitosa");
             break;
             
         default:
@@ -325,6 +365,9 @@ try {
 } catch (Exception $e) {
     sendResponse(false, [], "Error: " . $e->getMessage());
 } finally {
-    Database::closeConnection();
+    // Cerrar conexión
+    if (isset($conn) && $conn !== false) {
+        sqlsrv_close($conn);
+    }
 }
 ?>
