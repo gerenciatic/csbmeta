@@ -13,29 +13,183 @@ let vendorDistributionChart = null;
 let monthlySalesChart = null;
 let topProductsChart = null;
 let halfDoughnutChart = null;
-let currentCategory = 'all';
-let lastBillingDate = null;
 
-// Función para determinar si un registro es Factura o Nota
+// ==================== FUNCIONES DE PRUEBA ====================
+
+// Función para registrar resultados de pruebas
+function logTestResult(message, type = 'info') {
+    const timestamp = new Date().toLocaleTimeString();
+    const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : type === 'warning' ? '⚠️' : 'ℹ️';
+    
+    console.log(`[${timestamp}] ${icon} ${message}`);
+    
+    // También mostrar en la interfaz si existe el elemento
+    const debugInfo = document.getElementById('debug-info');
+    if (debugInfo) {
+        debugInfo.innerHTML = `[${timestamp}] ${icon} ${message}`;
+    }
+}
+
+// Prueba de carga de datos
+window.runDataTest = function() {
+    logTestResult('Iniciando prueba de carga de datos...', 'info');
+    
+    const testData = {
+        year: currentYear,
+        month: currentMonth,
+        company: currentCompany
+    };
+    
+    logTestResult(`Parámetros: Año=${testData.year}, Mes=${testData.month}, Empresa=${testData.company}`, 'info');
+    
+    // Simular carga de datos
+    const startTime = Date.now();
+    
+    fetch('sales_api.php', {
+        method: 'POST',
+        body: new URLSearchParams({
+            action: 'get_sales_data',
+            year: testData.year,
+            month: testData.month,
+            empresa: testData.company
+        })
+    })
+    .then(response => {
+        const responseTime = Date.now() - startTime;
+        logTestResult(`Respuesta recibida en ${responseTime}ms`, 'info');
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            const recordCount = data.data.sales?.length || 0;
+            const vendorCount = data.data.vendors?.length || 0;
+            
+            logTestResult(`✅ Datos cargados: ${recordCount} registros, ${vendorCount} vendedores`, 'success');
+            logTestResult(`Última factura: ${data.data.last_billing_date || 'N/A'}`, 'info');
+            
+            // Probar procesamiento de datos
+            testDataProcessing(data.data);
+        } else {
+            logTestResult(`❌ Error en datos: ${data.message}`, 'error');
+        }
+    })
+    .catch(error => {
+        logTestResult(`❌ Error de conexión: ${error.message}`, 'error');
+    });
+};
+
+// Prueba de procesamiento de datos
+function testDataProcessing(data) {
+    logTestResult('Probando procesamiento de datos...', 'info');
+    
+    try {
+        // Test 1: Verificar estructura de datos
+        const requiredFields = ['vendor', 'product', 'total', 'date'];
+        const sampleItem = data.sales[0];
+        
+        if (sampleItem) {
+            const missingFields = requiredFields.filter(field => !(field in sampleItem));
+            if (missingFields.length === 0) {
+                logTestResult('✅ Estructura de datos correcta', 'success');
+            } else {
+                logTestResult(`⚠️ Campos faltantes: ${missingFields.join(', ')}`, 'warning');
+            }
+        }
+        
+        // Test 2: Verificar cálculos
+        const metrics = calculateMetrics(data.sales);
+        logTestResult(`Cálculos: Ventas=$${metrics.totalSales}, Transacciones=${metrics.transactions}`, 'info');
+        
+        // Test 3: Verificar filtros
+        const filtered = data.sales.filter(item => item.vendor === '03');
+        logTestResult(`Filtro vendedor 03: ${filtered.length} registros`, 'info');
+        
+    } catch (error) {
+        logTestResult(`❌ Error en procesamiento: ${error.message}`, 'error');
+    }
+}
+
+// Prueba de API
+window.runAPITest = function() {
+    logTestResult('Iniciando pruebas de API...', 'info');
+    
+    const endpoints = [
+        { action: 'get_sales_data', params: { year: currentYear, month: currentMonth } },
+        { action: 'change_company', params: { empresa: 'A' } }
+    ];
+    
+    let completed = 0;
+    
+    endpoints.forEach(endpoint => {
+        fetch('sales_api.php', {
+            method: 'POST',
+            body: new URLSearchParams({
+                action: endpoint.action,
+                ...endpoint.params
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            completed++;
+            if (data.success) {
+                logTestResult(`✅ ${endpoint.action}: ${data.message}`, 'success');
+            } else {
+                logTestResult(`❌ ${endpoint.action}: ${data.message}`, 'error');
+            }
+            
+            if (completed === endpoints.length) {
+                logTestResult('✅ Todas las pruebas de API completadas', 'success');
+            }
+        })
+        .catch(error => {
+            completed++;
+            logTestResult(`❌ ${endpoint.action}: Error de red - ${error.message}`, 'error');
+        });
+    });
+};
+
+// Prueba de filtros
+window.runFilterTest = function() {
+    logTestResult('Probando sistema de filtros...', 'info');
+    
+    if (salesData.length === 0) {
+        logTestResult('⚠️ No hay datos para probar filtros', 'warning');
+        return;
+    }
+    
+    // Test filtro por vendedor
+    const testVendor = salesData[0]?.vendor;
+    if (testVendor) {
+        const vendorFiltered = salesData.filter(item => item.vendor === testVendor);
+        logTestResult(`Filtro vendedor "${testVendor}": ${vendorFiltered.length} registros`, 'info');
+    }
+    
+    // Test filtro por producto
+    const testProduct = salesData[0]?.product;
+    if (testProduct) {
+        const productFiltered = salesData.filter(item => 
+            item.product && item.product.toLowerCase().includes(testProduct.substring(0, 3).toLowerCase())
+        );
+        logTestResult(`Filtro producto "${testProduct.substring(0, 3)}": ${productFiltered.length} registros`, 'info');
+    }
+    
+    logTestResult('✅ Pruebas de filtros completadas', 'success');
+};
+
+// ==================== FUNCIONES PRINCIPALES ====================
+
+// Función para determinar tipo de transacción
 function getTransactionType(item) {
     const doc = (item.doc || '').toString().toUpperCase();
     const total = parseFloat(item.total) || 0;
     
-    // Detectar notas de crédito
-    if (doc.includes('NOTA') || doc.includes('NC') || doc.includes('ND')) {
+    if (doc.includes('NOTA') || doc.includes('NC') || doc.includes('ND') || total < 0) {
         return 'nota';
     }
-    
-    // Si el total es negativo, es una nota
-    if (total < 0) {
-        return 'nota';
-    }
-    
-    // Por defecto es factura
     return 'factura';
 }
 
-// Función para formatear números con separadores de miles
+// Función para formatear números
 function formatNumber(number, decimals = 2, isCurrency = false) {
     if (isNaN(number) || number === null || number === undefined) {
         return isCurrency ? '$0.00' : '0.00';
@@ -48,7 +202,7 @@ function formatNumber(number, decimals = 2, isCurrency = false) {
     return isCurrency ? '$' + parts.join('.') : parts.join('.');
 }
 
-// Actualizar la hora en tiempo real
+// Actualizar hora
 function updateTime() {
     const now = new Date();
     const timeStr = now.getHours().toString().padStart(2, '0') + ':' + 
@@ -56,38 +210,17 @@ function updateTime() {
     document.getElementById('current-time').textContent = timeStr;
 }
 
-// Mostrar mensaje al usuario
+// Mostrar mensajes al usuario
 function showUserMessage(type, message, duration = 5000) {
-    // Remover mensajes existentes
-    const existingMsg = document.getElementById('user-message');
-    if (existingMsg) {
-        existingMsg.remove();
-    }
+    logTestResult(`${type.toUpperCase()}: ${message}`, type === 'error' ? 'error' : 'info');
     
-    const messageEl = document.createElement('div');
-    messageEl.id = 'user-message';
-    messageEl.className = `user-message ${type}`;
-    messageEl.innerHTML = `
-        <div class="message-content">
-            <span class="message-icon">${type === 'error' ? '❌' : type === 'warning' ? '⚠️' : 'ℹ️'}</span>
-            <span class="message-text">${message}</span>
-            <button class="message-close" onclick="this.parentElement.parentElement.remove()">×</button>
-        </div>
-    `;
-    
-    document.body.appendChild(messageEl);
-    
-    // Auto-remover después del tiempo especificado
-    if (duration > 0) {
-        setTimeout(() => {
-            if (messageEl.parentElement) {
-                messageEl.remove();
-            }
-        }, duration);
+    // Implementación simple con alert (puedes mejorarla con un sistema de notificaciones)
+    if (type === 'error') {
+        alert(`❌ Error: ${message}`);
     }
 }
 
-// Calcular métricas basadas en los datos
+// Calcular métricas
 function calculateMetrics(data) {
     if (!data || data.length === 0) {
         return {
@@ -96,7 +229,6 @@ function calculateMetrics(data) {
             achievement: 0,
             transactions: 0,
             salesTarget: 0,
-            kgTarget: 0,
             facturasTotal: 0,
             notasTotal: 0,
             netSales: 0
@@ -106,8 +238,6 @@ function calculateMetrics(data) {
     let facturasTotal = 0;
     let notasTotal = 0;
     let totalKg = 0;
-    let facturasCount = 0;
-    let notasCount = 0;
     
     data.forEach(item => {
         const transactionType = getTransactionType(item);
@@ -116,44 +246,31 @@ function calculateMetrics(data) {
         
         if (transactionType === 'factura') {
             facturasTotal += amount;
-            facturasCount++;
         } else {
             notasTotal += amount;
-            notasCount++;
         }
         
         totalKg += kgValue;
     });
     
-    // Ventas netas = Facturas - Notas
     const netSales = Math.max(0, facturasTotal - notasTotal);
     const transactions = data.length;
     
-    // Obtener vendedor seleccionado
+    // Calcular meta
     const vendor = document.getElementById('vendor-select').value;
     let salesTarget = 0;
     
-    // Calcular meta según selección
     if (vendor !== 'all') {
         const vendorQuota = quotasData.find(q => 
             q.CODIGO_VENDEDOR === vendor && 
             parseInt(q.ANNO) === currentYear && 
             parseInt(q.MES) === currentMonth
         );
-        
-        if (vendorQuota && vendorQuota.CUOTA_DIVISA) {
-            salesTarget = Math.abs(parseFloat(vendorQuota.CUOTA_DIVISA));
-        }
+        salesTarget = vendorQuota ? Math.abs(parseFloat(vendorQuota.CUOTA_DIVISA)) : 0;
     } else {
-        const relevantQuotas = quotasData.filter(q => 
-            parseInt(q.ANNO) === currentYear && 
-            parseInt(q.MES) === currentMonth
-        );
-        
-        salesTarget = relevantQuotas.reduce((sum, q) => {
-            const quotaValue = q.CUOTA_DIVISA ? Math.abs(parseFloat(q.CUOTA_DIVISA)) : 0;
-            return sum + quotaValue;
-        }, 0);
+        salesTarget = quotasData
+            .filter(q => parseInt(q.ANNO) === currentYear && parseInt(q.MES) === currentMonth)
+            .reduce((sum, q) => sum + Math.abs(parseFloat(q.CUOTA_DIVISA || 0)), 0);
     }
     
     const achievement = salesTarget > 0 ? Math.min(100, (netSales / salesTarget) * 100) : 0;
@@ -162,25 +279,19 @@ function calculateMetrics(data) {
         totalSales: netSales,
         avgKg: transactions > 0 ? totalKg / transactions : 0,
         achievement: achievement,
-        transactions,
-        salesTarget,
-        kgTarget: 0,
-        facturasTotal,
-        notasTotal,
-        netSales
+        transactions: transactions,
+        salesTarget: salesTarget,
+        facturasTotal: facturasTotal,
+        notasTotal: notasTotal,
+        netSales: netSales
     };
 }
 
-// Crear o actualizar la gráfica de media torta
+// Actualizar gráfica de media torta
 function updateHalfDoughnutChart(percentage, totalSales, salesTarget) {
     const ctx = document.getElementById('halfDoughnutChart');
+    if (!ctx) return;
     
-    if (!ctx) {
-        console.error("Canvas halfDoughnutChart no encontrado");
-        return;
-    }
-    
-    // Si ya existe un gráfico, destruirlo primero
     if (halfDoughnutChart) {
         halfDoughnutChart.destroy();
     }
@@ -200,8 +311,7 @@ function updateHalfDoughnutChart(percentage, totalSales, salesTarget) {
                     achieved >= 60 ? '#f39c12' : '#e74c3c',
                     '#e3e6f0'
                 ],
-                borderWidth: 0,
-                borderRadius: 5
+                borderWidth: 0
             }]
         },
         options: {
@@ -211,9 +321,7 @@ function updateHalfDoughnutChart(percentage, totalSales, salesTarget) {
             circumference: 180,
             rotation: -90,
             plugins: {
-                legend: {
-                    display: false
-                },
+                legend: { display: false },
                 tooltip: {
                     callbacks: {
                         label: function(context) {
@@ -225,14 +333,10 @@ function updateHalfDoughnutChart(percentage, totalSales, salesTarget) {
         }
     });
     
-    // Actualizar el valor en el centro del gráfico
+    // Actualizar valores
     const achievementElement = document.getElementById('achievement-percentage');
     if (achievementElement) {
         achievementElement.textContent = formatNumber(percentage, 1) + '%';
-        achievementElement.style.color = 
-            percentage >= 100 ? '#2ecc71' : 
-            percentage >= 80 ? '#3498db' : 
-            percentage >= 60 ? '#f39c12' : '#e74c3c';
     }
     
     updateChartInfoPanel(totalSales, salesTarget);
@@ -282,7 +386,7 @@ function loadQuotasData() {
     if (!quotasBody) return;
     
     if (!quotasData || quotasData.length === 0) {
-        quotasBody.innerHTML = '<tr><td colspan="7" class="no-data">No hay cuotas definidas para este período</td></tr>';
+        quotasBody.innerHTML = '<tr><td colspan="7" class="no-data">No hay cuotas definidas</td></tr>';
         return;
     }
     
@@ -308,7 +412,7 @@ function loadCategoryQuotasData() {
     if (!categoryQuotasBody) return;
     
     if (!categoryQuotasData || categoryQuotasData.length === 0) {
-        categoryQuotasBody.innerHTML = '<tr><td colspan="7" class="no-data">No hay cuotas por categoría definidas</td></tr>';
+        categoryQuotasBody.innerHTML = '<tr><td colspan="7" class="no-data">No hay cuotas por categoría</td></tr>';
         return;
     }
     
@@ -316,11 +420,11 @@ function loadCategoryQuotasData() {
     categoryQuotasData.forEach(quota => {
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${quota.VENDEDOR || quota.CODIGO_VENDEDOR || 'N/A'}</td>
-            <td>${quota.LINEA || quota.CLASE_PRODUCTO || 'N/A'}</td>
+            <td>${quota.CODIGO_VENDEDOR || 'N/A'}</td>
+            <td>${quota.CLASE_PRODUCTO || 'N/A'}</td>
             <td>${quota.ANNO || 'N/A'}</td>
             <td>${quota.MES || 'N/A'}</td>
-            <td>${formatNumber(parseFloat(quota.CUOTA_LINEA || quota.CUOTA_DIVISA || 0), 2, true)}</td>
+            <td>${formatNumber(parseFloat(quota.CUOTA_DIVISA || 0), 2, true)}</td>
             <td>${formatNumber(parseFloat(quota.CUOTA_ACTIVACION || 0), 2, true)}</td>
             <td>${quota.FECHA_ACTUALIZACION ? new Date(quota.FECHA_ACTUALIZACION).toLocaleDateString() : 'N/A'}</td>
         `;
@@ -343,9 +447,7 @@ function groupDataByVendor(data) {
                 facturasTotal: 0,
                 notasTotal: 0,
                 totalKg: 0,
-                transactions: 0,
-                facturasCount: 0,
-                notasCount: 0
+                transactions: 0
             };
         }
         
@@ -355,11 +457,9 @@ function groupDataByVendor(data) {
         
         if (transactionType === 'factura') {
             grouped[vendor].facturasTotal += amount;
-            grouped[vendor].facturasCount++;
             grouped[vendor].totalSales += amount;
         } else {
             grouped[vendor].notasTotal += amount;
-            grouped[vendor].notasCount++;
             grouped[vendor].totalSales -= amount;
         }
         
@@ -417,9 +517,7 @@ function renderSalesData(data, page, rowsPerPage) {
     tableBody.innerHTML = '';
     
     if (!data || data.length === 0) {
-        const row = document.createElement('tr');
-        row.innerHTML = '<td colspan="9" class="no-data">No hay datos para mostrar con los filtros aplicados</td>';
-        tableBody.appendChild(row);
+        tableBody.innerHTML = '<tr><td colspan="9" class="no-data">No hay datos para mostrar</td></tr>';
         updatePaginationControls(0, page);
         return;
     }
@@ -440,10 +538,10 @@ function renderSalesData(data, page, rowsPerPage) {
         row.className = rowClass;
         row.innerHTML = `
             <td>${item.doc || 'N/A'}</td>
-            <td>${item.date || item.fecha_factura || 'N/A'}</td>
+            <td>${item.date || 'N/A'}</td>
             <td>${item.vendor || 'N/A'}</td>
             <td>${item.product || 'N/A'}</td>
-            <td>${item.category || item.customer_name || 'N/A'}</td>
+            <td>${item.customer_name || 'N/A'}</td>
             <td>${formatNumber(unitPrice, 4, true)}</td>
             <td>${item.quantity || '0'}</td>
             <td>${formatNumber(kg, 2)}</td>
@@ -479,10 +577,9 @@ function updateCharts() {
         updateHalfDoughnutChart(metrics.achievement, metrics.totalSales, metrics.salesTarget);
         updateSalesProgressChart();
         updateVendorDistributionChart();
-        updateMonthlySalesChart();
-        updateTopProductsChart();
     } catch (error) {
         console.error('Error actualizando gráficas:', error);
+        logTestResult(`Error en gráficas: ${error.message}`, 'error');
     }
 }
 
@@ -516,16 +613,7 @@ function updateSalesProgressChart() {
         options: {
             responsive: true,
             plugins: {
-                legend: {
-                    display: false
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            return context.dataset.label + ': $' + context.raw.toFixed(2);
-                        }
-                    }
-                }
+                legend: { display: false }
             },
             scales: {
                 y: {
@@ -541,7 +629,7 @@ function updateSalesProgressChart() {
     });
 }
 
-// Gráfica de distribución por Vendedor
+// Gráfica de distribución por vendedor
 function updateVendorDistributionChart() {
     const ctx = document.getElementById('vendor-distribution-chart');
     if (!ctx) return;
@@ -556,174 +644,13 @@ function updateVendorDistributionChart() {
         return;
     }
 
-    const vendorAchievementData = vendorSalesData.map(vendor => {
-        const quotaInfo = quotasData.find(q => 
-            q.CODIGO_VENDEDOR === vendor.vendor &&
-            parseInt(q.ANNO) === currentYear &&
-            parseInt(q.MES) === currentMonth
-        );
-
-        const salesTarget = quotaInfo ? parseFloat(quotaInfo.CUOTA_DIVISA) || 0 : 0;
-        const achievement = salesTarget > 0 ? (vendor.totalSales / salesTarget) * 100 : 0;
-
-        return {
-            vendor: vendor.vendor,
-            achievement: Math.min(achievement, 100),
-            sales: vendor.totalSales
-        };
-    });
-
-    const sortedVendors = vendorAchievementData.sort((a, b) => b.achievement - a.achievement);
-    
     vendorDistributionChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: sortedVendors.map(v => v.vendor),
+            labels: vendorSalesData.map(v => v.vendor),
             datasets: [{
-                label: '% Cumplimiento',
-                data: sortedVendors.map(v => v.achievement),
-                backgroundColor: sortedVendors.map(v => 
-                    v.achievement >= 100 ? '#2ecc71' : 
-                    v.achievement >= 80 ? '#3498db' : 
-                    v.achievement >= 60 ? '#f39c12' : '#e74c3c'
-                ),
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: {
-                    display: false
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            const vendor = sortedVendors[context.dataIndex];
-                            return [
-                                `Cumplimiento: ${context.parsed.y.toFixed(1)}%`,
-                                `Ventas: $${formatNumber(vendor.sales, 2)}`
-                            ];
-                        }
-                    }
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    max: 110,
-                    ticks: {
-                        callback: function(value) {
-                            return value + '%';
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-// Gráfica de evolución mensual
-function updateMonthlySalesChart() {
-    const ctx = document.getElementById('monthly-sales-chart');
-    if (!ctx) return;
-    
-    if (monthlySalesChart) {
-        monthlySalesChart.destroy();
-    }
-    
-    // Datos de ejemplo para la evolución mensual
-    const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-    const monthlySales = Array(12).fill(0);
-    
-    // Simular datos mensuales basados en los datos actuales
-    const metrics = calculateMetrics(filteredData);
-    const currentMonthIndex = currentMonth - 1;
-    
-    // Distribuir las ventas actuales en el mes correspondiente
-    if (currentMonthIndex >= 0 && currentMonthIndex < 12) {
-        monthlySales[currentMonthIndex] = metrics.totalSales;
-    }
-    
-    monthlySalesChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: months,
-            datasets: [{
-                label: 'Ventas Mensuales ($)',
-                data: monthlySales,
-                backgroundColor: 'rgba(52, 152, 219, 0.2)',
-                borderColor: 'rgba(52, 152, 219, 1)',
-                borderWidth: 2,
-                tension: 0.3,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    ticks: {
-                        callback: function(value) {
-                            return '$' + value.toFixed(2);
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-// Gráfica de top productos
-function updateTopProductsChart() {
-    const ctx = document.getElementById('top-products-chart');
-    if (!ctx) return;
-    
-    if (topProductsChart) {
-        topProductsChart.destroy();
-    }
-    
-    if (!filteredData || filteredData.length === 0) {
-        return;
-    }
-    
-    const productSales = {};
-    filteredData.forEach(item => {
-        const transactionType = getTransactionType(item);
-        const amount = Math.abs(parseFloat(item.total) || 0);
-        const product = item.product || 'Sin nombre';
-        
-        if (!productSales[product]) {
-            productSales[product] = 0;
-        }
-        
-        if (transactionType === 'factura') {
-            productSales[product] += amount;
-        } else {
-            productSales[product] -= amount;
-        }
-    });
-    
-    const productArray = Object.keys(productSales)
-        .map(product => ({ product, sales: Math.max(0, productSales[product]) }))
-        .filter(item => item.sales > 0);
-    
-    const topProducts = productArray.sort((a, b) => b.sales - a.sales).slice(0, 8);
-    
-    if (topProducts.length === 0) {
-        return;
-    }
-    
-    topProductsChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: topProducts.map(p => {
-                return p.product.length > 20 ? p.product.substring(0, 20) + '...' : p.product;
-            }),
-            datasets: [{
-                label: 'Ventas por Producto ($)',
-                data: topProducts.map(p => p.sales),
+                label: 'Ventas ($)',
+                data: vendorSalesData.map(v => v.totalSales),
                 backgroundColor: '#3498db',
                 borderWidth: 1
             }]
@@ -744,7 +671,7 @@ function updateTopProductsChart() {
     });
 }
 
-// Filtrar datos basados en los filtros seleccionados
+// Filtrar datos
 function filterData() {
     const vendor = document.getElementById('vendor-select').value;
     const productFilter = document.getElementById('product-filter').value.toLowerCase();
@@ -790,11 +717,7 @@ function showLoading() {
         'total-sales': '$0.00',
         'avg-kg': '0.00',
         'transactions': '0',
-        'budget-compliance': '0%',
-        'achievement-percentage': '0%',
-        'accumulated-sales': '$0.00',
-        'sales-target': '$0.00',
-        'remaining-amount': '$0.00'
+        'budget-compliance': '0%'
     };
     
     Object.entries(metrics).forEach(([id, value]) => {
@@ -803,11 +726,9 @@ function showLoading() {
     });
 }
 
-// Actualizar todo el dashboard
+// Actualizar dashboard completo
 function updateDashboard() {
     const metrics = calculateMetrics(filteredData);
-    
-    console.log("Métricas calculadas:", metrics);
     
     // Actualizar métricas
     updateMetric('total-sales', formatNumber(metrics.totalSales, 2, true));
@@ -815,7 +736,7 @@ function updateDashboard() {
     updateMetric('transactions', formatNumber(metrics.transactions, 0));
     updateMetric('budget-compliance', formatNumber(metrics.achievement, 1) + '%');
     
-    // Actualizar gráfica de media torta
+    // Actualizar gráficas
     updateHalfDoughnutChart(metrics.achievement, metrics.totalSales, metrics.salesTarget);
     
     // Actualizar resumen por vendedor
@@ -827,6 +748,8 @@ function updateDashboard() {
     
     // Actualizar selectores
     updateSelectors();
+    
+    logTestResult(`Dashboard actualizado: ${filteredData.length} registros`, 'info');
 }
 
 // Actualizar una métrica individual
@@ -842,7 +765,6 @@ function updateSelectors() {
     updateVendorSelectors();
     updateYearSelectors();
     updateMonthSelectors();
-    updateCategorySelectors();
 }
 
 // Actualizar selectores de vendedor
@@ -925,22 +847,6 @@ function updateMonthSelectors() {
     });
 }
 
-// Actualizar selectores de categoría
-function updateCategorySelectors() {
-    const categories = [...new Set(salesData.map(item => item.category).filter(c => c))];
-    const categoryQuotaLineaSelect = document.getElementById('category-quota-linea');
-    
-    if (categoryQuotaLineaSelect) {
-        categoryQuotaLineaSelect.innerHTML = '<option value="">Seleccionar línea/categoría</option>';
-        categories.forEach(category => {
-            const option = document.createElement('option');
-            option.value = category;
-            option.textContent = category;
-            categoryQuotaLineaSelect.appendChild(option);
-        });
-    }
-}
-
 // Cambiar empresa
 function changeCompany(company) {
     currentCompany = company;
@@ -962,14 +868,13 @@ function changeCompany(company) {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            showUserMessage('success', `Empresa cambiada a: ${company}`);
+            showUserMessage('success', data.message);
             loadDataFromServer();
         } else {
-            showUserMessage('error', 'Error al cambiar de empresa: ' + data.message);
+            showUserMessage('error', 'Error al cambiar empresa: ' + data.message);
         }
     })
     .catch(error => {
-        console.error('Error al cambiar empresa:', error);
         showUserMessage('error', "Error al cambiar empresa: " + error.message);
     });
 }
@@ -987,16 +892,11 @@ function setupTabs() {
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             
-            // Mostrar contenido correspondiente
+            // Mostrar contenido
             tabPanes.forEach(pane => pane.classList.remove('active'));
             const targetPane = document.getElementById(`${tabId}-tab`);
             if (targetPane) {
                 targetPane.classList.add('active');
-            }
-            
-            // Si es la pestaña de rendimiento, actualizar gráficas
-            if (tabId === 'performance') {
-                setTimeout(updateCharts, 100);
             }
         });
     });
@@ -1004,7 +904,7 @@ function setupTabs() {
 
 // Configurar event listeners
 function setupEventListeners() {
-    // Filtros principales
+    // Filtros
     const vendorSelect = document.getElementById('vendor-select');
     const yearSelect = document.getElementById('year-select');
     const monthSelect = document.getElementById('month-select');
@@ -1019,14 +919,14 @@ function setupEventListeners() {
     const prevPage = document.getElementById('prev-page');
     const nextPage = document.getElementById('next-page');
     
-    if (prevPage) prevPage.addEventListener('click', function() {
+    if (prevPage) prevPage.addEventListener('click', () => {
         if (currentPage > 1) {
             currentPage--;
             updateDashboard();
         }
     });
     
-    if (nextPage) nextPage.addEventListener('click', function() {
+    if (nextPage) nextPage.addEventListener('click', () => {
         const totalPages = Math.ceil(filteredData.length / rowsPerPage);
         if (currentPage < totalPages) {
             currentPage++;
@@ -1034,266 +934,18 @@ function setupEventListeners() {
         }
     });
     
-    // Botones de empresa
+    // Empresas
     document.querySelectorAll('.company-btn').forEach(btn => {
         btn.addEventListener('click', function() {
             changeCompany(this.dataset.company);
         });
     });
-    
-    // Botones de cuotas
-    const loadQuotaBtn = document.getElementById('load-quota');
-    const saveQuotaBtn = document.getElementById('save-quota');
-    const deleteQuotaBtn = document.getElementById('delete-quota');
-    
-    if (loadQuotaBtn) loadQuotaBtn.addEventListener('click', loadQuota);
-    if (saveQuotaBtn) saveQuotaBtn.addEventListener('click', saveQuota);
-    if (deleteQuotaBtn) deleteQuotaBtn.addEventListener('click', deleteQuota);
-    
-    // Botones de cuotas por categoría
-    const loadCategoryQuotaBtn = document.getElementById('load-category-quota');
-    const saveCategoryQuotaBtn = document.getElementById('save-category-quota');
-    const deleteCategoryQuotaBtn = document.getElementById('delete-category-quota');
-    
-    if (loadCategoryQuotaBtn) loadCategoryQuotaBtn.addEventListener('click', loadCategoryQuota);
-    if (saveCategoryQuotaBtn) saveCategoryQuotaBtn.addEventListener('click', saveCategoryQuota);
-    if (deleteCategoryQuotaBtn) deleteCategoryQuotaBtn.addEventListener('click', deleteCategoryQuota);
 }
 
-// Cargar cuota específica
-function loadQuota() {
-    const vendor = document.getElementById('quota-vendor').value;
-    const year = document.getElementById('quota-year').value;
-    const month = document.getElementById('quota-month').value;
-    
-    if (!vendor) {
-        showUserMessage('warning', 'Seleccione un vendedor');
-        return;
-    }
-    
-    const quota = quotasData.find(q => 
-        q.CODIGO_VENDEDOR === vendor && 
-        parseInt(q.ANNO) === parseInt(year) && 
-        parseInt(q.MES) === parseInt(month)
-    );
-    
-    const amountInput = document.getElementById('quota-amount');
-    const boxesInput = document.getElementById('quota-boxes');
-    const kilosInput = document.getElementById('quota-kilos');
-    
-    if (quota) {
-        if (amountInput) amountInput.value = quota.CUOTA_DIVISA || '';
-        if (boxesInput) boxesInput.value = quota.CUOTA_CAJAS || '';
-        if (kilosInput) kilosInput.value = quota.CUOTA_KILOS || '';
-        showUserMessage('success', 'Cuota cargada correctamente');
-    } else {
-        if (amountInput) amountInput.value = '';
-        if (boxesInput) boxesInput.value = '';
-        if (kilosInput) kilosInput.value = '';
-        showUserMessage('info', 'No se encontró cuota para este vendedor y período');
-    }
-}
-
-// Guardar cuota
-function saveQuota() {
-    const vendor = document.getElementById('quota-vendor').value;
-    const year = document.getElementById('quota-year').value;
-    const month = document.getElementById('quota-month').value;
-    const amount = document.getElementById('quota-amount').value;
-    
-    if (!vendor || !year || !month) {
-        showUserMessage('warning', 'Complete todos los campos obligatorios');
-        return;
-    }
-    
-    const formData = new FormData();
-    formData.append('action', 'save_quota');
-    formData.append('vendor', vendor);
-    formData.append('year', year);
-    formData.append('month', month);
-    formData.append('amount', amount);
-    formData.append('boxes', document.getElementById('quota-boxes').value || 0);
-    formData.append('kilos', document.getElementById('quota-kilos').value || 0);
-    
-    fetch('sales_api.php', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showUserMessage('success', data.message);
-            loadDataFromServer();
-        } else {
-            showUserMessage('error', 'Error al guardar la cuota: ' + data.message);
-        }
-    })
-    .catch(error => {
-        console.error('Error al guardar cuota:', error);
-        showUserMessage('error', 'Error al guardar la cuota');
-    });
-}
-
-// Eliminar cuota
-function deleteQuota() {
-    const vendor = document.getElementById('quota-vendor').value;
-    const year = document.getElementById('quota-year').value;
-    const month = document.getElementById('quota-month').value;
-    
-    if (!vendor || !year || !month) {
-        showUserMessage('warning', 'Seleccione un vendedor, año y mes');
-        return;
-    }
-    
-    if (!confirm('¿Está seguro de que desea eliminar esta cuota?')) {
-        return;
-    }
-    
-    const formData = new FormData();
-    formData.append('action', 'delete_quota');
-    formData.append('vendor', vendor);
-    formData.append('year', year);
-    formData.append('month', month);
-    
-    fetch('sales_api.php', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showUserMessage('success', data.message);
-            loadDataFromServer();
-        } else {
-            showUserMessage('error', 'Error al eliminar la cuota: ' + data.message);
-        }
-    })
-    .catch(error => {
-        console.error('Error al eliminar cuota:', error);
-        showUserMessage('error', 'Error al eliminar la cuota');
-    });
-}
-
-// Cargar cuota por categoría
-function loadCategoryQuota() {
-    const vendor = document.getElementById('category-quota-vendor').value;
-    const year = document.getElementById('category-quota-year').value;
-    const month = document.getElementById('category-quota-month').value;
-    const linea = document.getElementById('category-quota-linea').value;
-    
-    if (!vendor || !linea) {
-        showUserMessage('warning', 'Seleccione un vendedor y una línea/categoría');
-        return;
-    }
-    
-    const quota = categoryQuotasData.find(q => 
-        (q.VENDEDOR === vendor || q.CODIGO_VENDEDOR === vendor) && 
-        (q.LINEA === linea || q.CLASE_PRODUCTO === linea) && 
-        parseInt(q.ANNO) === parseInt(year) && 
-        parseInt(q.MES) === parseInt(month)
-    );
-    
-    const amountInput = document.getElementById('category-quota-amount');
-    const activacionInput = document.getElementById('category-quota-activacion');
-    
-    if (quota) {
-        if (amountInput) amountInput.value = quota.CUOTA_LINEA || quota.CUOTA_DIVISA || '';
-        if (activacionInput) activacionInput.value = quota.CUOTA_ACTIVACION || '';
-        showUserMessage('success', 'Cuota por categoría cargada correctamente');
-    } else {
-        if (amountInput) amountInput.value = '';
-        if (activacionInput) activacionInput.value = '';
-        showUserMessage('info', 'No se encontró cuota para esta categoría y período');
-    }
-}
-
-// Guardar cuota por categoría
-function saveCategoryQuota() {
-    const vendor = document.getElementById('category-quota-vendor').value;
-    const year = document.getElementById('category-quota-year').value;
-    const month = document.getElementById('category-quota-month').value;
-    const linea = document.getElementById('category-quota-linea').value;
-    const amount = document.getElementById('category-quota-amount').value;
-    const activacion = document.getElementById('category-quota-activacion').value;
-    
-    if (!vendor || !year || !month || !linea) {
-        showUserMessage('warning', 'Complete todos los campos obligatorios');
-        return;
-    }
-    
-    const formData = new FormData();
-    formData.append('action', 'save_class_quota');
-    formData.append('vendor', vendor);
-    formData.append('year', year);
-    formData.append('month', month);
-    formData.append('product_class', linea);
-    formData.append('amount', amount);
-    formData.append('activacion', activacion);
-    
-    fetch('sales_api.php', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showUserMessage('success', data.message);
-            loadDataFromServer();
-        } else {
-            showUserMessage('error', 'Error al guardar la cuota por categoría: ' + data.message);
-        }
-    })
-    .catch(error => {
-        console.error('Error al guardar cuota por categoría:', error);
-        showUserMessage('error', 'Error al guardar la cuota por categoría');
-    });
-}
-
-// Eliminar cuota por categoría
-function deleteCategoryQuota() {
-    const vendor = document.getElementById('category-quota-vendor').value;
-    const year = document.getElementById('category-quota-year').value;
-    const month = document.getElementById('category-quota-month').value;
-    const linea = document.getElementById('category-quota-linea').value;
-    
-    if (!vendor || !year || !month || !linea) {
-        showUserMessage('warning', 'Complete todos los campos obligatorios');
-        return;
-    }
-    
-    if (!confirm('¿Está seguro de que desea eliminar esta cuota por categoría?')) {
-        return;
-    }
-    
-    const formData = new FormData();
-    formData.append('action', 'delete_class_quota');
-    formData.append('vendor', vendor);
-    formData.append('year', year);
-    formData.append('month', month);
-    formData.append('product_class', linea);
-    
-    fetch('sales_api.php', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showUserMessage('success', data.message);
-            loadDataFromServer();
-        } else {
-            showUserMessage('error', 'Error al eliminar la cuota por categoría: ' + data.message);
-        }
-    })
-    .catch(error => {
-        console.error('Error al eliminar cuota por categoría:', error);
-        showUserMessage('error', 'Error al eliminar la cuota por categoría');
-    });
-}
-
-// Cargar datos desde el servidor
+// Cargar datos desde servidor
 function loadDataFromServer() {
     showLoading();
+    updateConnectionStatus(false);
     updateDebugInfo("Solicitando datos al servidor...");
     
     const formData = new FormData();
@@ -1306,113 +958,44 @@ function loadDataFromServer() {
         method: 'POST',
         body: formData
     })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        return response.json();
-    })
+    .then(response => response.json())
     .then(data => {
-        if (data.success === false) {
-            // Manejar caso sin datos
-            if (data.message && data.message.includes('No hay datos')) {
-                handleNoDataScenario();
-                return;
+        if (data.success) {
+            updateConnectionStatus(true);
+            salesData = data.data.sales || [];
+            quotasData = data.data.quotas || [];
+            categoryQuotasData = data.data.class_quotas || [];
+            filteredData = [...salesData];
+            
+            logTestResult(`Datos cargados: ${salesData.length} registros`, 'success');
+            updateDebugInfo(`Datos cargados: ${salesData.length} registros`);
+            
+            updateDashboard();
+            loadQuotasData();
+            loadCategoryQuotasData();
+            updateCharts();
+            
+            // Actualizar última fecha
+            const lastBillingElement = document.getElementById('last-billing-date');
+            if (lastBillingElement) {
+                lastBillingElement.textContent = data.data.last_billing_date || 'No disponible';
             }
-            throw new Error(data.message || 'Error en los datos recibidos');
-        }
-        
-        updateConnectionStatus(true);
-        salesData = data.data.sales || [];
-        quotasData = data.data.quotas || [];
-        categoryQuotasData = data.data.class_quotas || [];
-        lastBillingDate = data.data.last_billing_date || null;
-        filteredData = [...salesData];
-        
-        console.log("Datos cargados correctamente:", {
-            ventas: salesData.length,
-            cuotas: quotasData.length,
-            cuotasClase: categoryQuotasData.length,
-            ultimaFecha: lastBillingDate
-        });
-        
-        updateDashboard();
-        loadQuotasData();
-        loadCategoryQuotasData();
-        updateCharts();
-        updateLastBillingDate();
-        updateDebugInfo(`Datos cargados: ${salesData.length} registros`);
-        
-        if (salesData.length === 0) {
-            showUserMessage('info', 'No se encontraron datos para el período seleccionado', 3000);
+        } else {
+            updateConnectionStatus(false);
+            showUserMessage('error', data.message);
+            updateDebugInfo("Error: " + data.message);
         }
     })
     .catch(error => {
-        console.error('Error al cargar datos:', error);
         updateConnectionStatus(false);
+        showUserMessage('error', 'Error de conexión: ' + error.message);
         updateDebugInfo("Error: " + error.message);
-        handleLoadError(error);
     });
 }
 
-// Manejar escenario sin datos
-function handleNoDataScenario() {
-    salesData = [];
-    quotasData = [];
-    categoryQuotasData = [];
-    filteredData = [];
-    lastBillingDate = "No hay datos";
-    
-    updateConnectionStatus(true);
-    updateDashboard();
-    updateCharts();
-    updateLastBillingDate();
-    updateDebugInfo("No hay datos para el período seleccionado");
-    showUserMessage('info', 'No se encontraron datos para el período seleccionado', 3000);
-}
-
-// Manejar errores de carga
-function handleLoadError(error) {
-    const errorMsg = error.message.includes('Failed to fetch') 
-        ? 'Error de conexión. Verifique el servidor y la red.' 
-        : 'Error: ' + error.message;
-        
-    showUserMessage('error', errorMsg, 0); // 0 = no auto-remover
-}
-
-// Actualizar la visualización de la última fecha de facturación
-function updateLastBillingDate() {
-    const lastBillingElement = document.getElementById('last-billing-date');
-    
-    if (!lastBillingElement) return;
-    
-    if (lastBillingDate && lastBillingDate !== "No disponible" && lastBillingDate !== "No hay datos") {
-        try {
-            const dateObj = new Date(lastBillingDate);
-            if (!isNaN(dateObj)) {
-                const day = String(dateObj.getDate()).padStart(2, '0');
-                const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-                const year = dateObj.getFullYear();
-                const formattedDate = `${day}-${month}-${year}`;
-                lastBillingElement.textContent = formattedDate;
-                lastBillingElement.className = 'last-billing-value has-data';
-            } else {
-                lastBillingElement.textContent = lastBillingDate;
-                lastBillingElement.className = 'last-billing-value';
-            }
-        } catch (e) {
-            lastBillingElement.textContent = lastBillingDate;
-            lastBillingElement.className = 'last-billing-value';
-        }
-    } else {
-        lastBillingElement.textContent = lastBillingDate || 'No disponible';
-        lastBillingElement.className = 'last-billing-value no-data';
-    }
-}
-
-// Inicializar el dashboard
+// Inicializar dashboard
 function initDashboard() {
-    console.log("Inicializando dashboard...");
+    logTestResult('Inicializando dashboard...', 'info');
     
     try {
         setupTabs();
@@ -1421,16 +1004,10 @@ function initDashboard() {
         setInterval(updateTime, 60000);
         loadDataFromServer();
         
-        // Actualizar gráficas después de un breve delay
-        setTimeout(() => {
-            updateCharts();
-        }, 1000);
-        
-        console.log("Dashboard inicializado correctamente");
+        logTestResult('Dashboard inicializado correctamente', 'success');
     } catch (error) {
-        console.error("Error inicializando dashboard:", error);
-        updateDebugInfo("Error inicializando: " + error.message);
-        showUserMessage('error', 'Error inicializando el dashboard: ' + error.message);
+        logTestResult(`Error inicializando: ${error.message}`, 'error');
+        showUserMessage('error', 'Error inicializando el dashboard');
     }
 }
 
