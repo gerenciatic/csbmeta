@@ -1,373 +1,436 @@
 <?php
+
+// Configuración de tiempo
+set_time_limit(800);
+ini_set('max_execution_time', 800);
+
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST');
+header('Access-Control-Allow-Headers: Content-Type');
+
 session_start();
 date_default_timezone_set('America/Caracas');
-header('Content-Type: application/json');
 
-// Incluir conexión
-include 'includes/conexsql.php';
+// Configuración de bases de datos por empresa
+$empresas = [
+    'A' => 'REPORT',      // CSB
+    'B' => 'MX_REPORT',   // MAXI
+    'C' => 'MD_REPORT'    // MERIDA
+];
 
-// Función para respuesta estandarizada
-function sendResponse($success, $data = [], $message = '') {
-    $response = [
-        'success' => $success,
-        'message' => $message,
-        'data' => $data,
-        'timestamp' => date('Y-m-d H:i:s'),
-        'debug' => [
-            'empresa' => $_SESSION['empresa_seleccionada'] ?? 'A',
-            'basededatos' => $GLOBALS['basededatos'] ?? 'REPORT'
-        ]
-    ];
+// Obtener empresa seleccionada
+$empresaSeleccionada = $_POST['empresa'] ?? $_SESSION['empresa_seleccionada'] ?? 'A';
+$_SESSION['empresa_seleccionada'] = $empresaSeleccionada;
+$basededatos = $empresas[$empresaSeleccionada] ?? 'REPORT';
+
+// Conexión a la base de datos con manejo de errores mejorado
+$serverName = "SRV-PROFIT\CATA";
+$connectionOptions = [
+    "Database" => $basededatos,
+    "Uid" => "admin",
+    "PWD" => "admin",
+    "TrustServerCertificate" => true,
+    "CharacterSet" => "UTF-8",
+    "ReturnDatesAsStrings" => true // IMPORTANTE: Devuelve fechas como strings
+];
+
+try {
+    $conn = sqlsrv_connect($serverName, $connectionOptions);
     
-    echo json_encode($response, JSON_UNESCAPED_UNICODE | JSON_NUMERIC_CHECK);
-    exit;
-}
-
-// Función para ejecutar consultas seguras
-function executeQuery($conn, $sql, $params = []) {
-    $stmt = sqlsrv_query($conn, $sql, $params);
-    
-    if ($stmt === false) {
+    if ($conn === false) {
         $errors = sqlsrv_errors();
-        $errorMessage = "Error en consulta SQL: ";
+        $errorMessage = "Error de conexión: ";
         foreach ($errors as $error) {
             $errorMessage .= "SQLSTATE: " . $error['SQLSTATE'] . ", ";
+            $errorMessage .= "Código: " . $error['code'] . ", ";
             $errorMessage .= "Mensaje: " . $error['message'];
         }
-        throw new Exception($errorMessage);
+        
+        echo json_encode([
+            "success" => false, 
+            "message" => $errorMessage,
+            "debug" => [
+                "server" => $serverName,
+                "database" => $basededatos,
+                "user" => "admin",
+                "empresa" => $empresaSeleccionada
+            ]
+        ]);
+        exit();
     }
     
-    return $stmt;
-}
+    // Si la conexión es exitosa, continuar con el procesamiento
+    $action = $_POST['action'] ?? '';
 
-// Función para obtener datos de ventas
-function getSalesData($conn, $year, $month, $vendor = 'all') {
-    // CONSULTA PRINCIPAL CON LAS COLUMNAS CORRECTAS
-    $sql = "SELECT 
-            VA.B002200CVE as vendor,
-            VA.B002201CPR as product,
-            VA.KILO as kg,
-            VA.UNIDAD_VENDIDA as quantity,
-            VA.TOTAL_VTA_DIVISA_DES as total,
-            VA.CAJAS_ESTADISTICAS as boxes,
-            VA.MES as month,
-            VA.ANNO as year,
-            VA.B002200RSO as customer_name,
-            VA.B002200CCL as customer_code,
-            CONVERT(VARCHAR(10), VA.B002200FEC, 120) as date,
-            VA.B002200DOC as doc,
-            VA.B002201CLS as category
-        FROM VENTA_ACUMULADA VA
-        WHERE VA.ANNO = ? 
-          AND VA.MES = ?
-          AND VA.B002200CVE NOT IN ('01', '')";
-    
-    $params = [$year, $month];
-    
-    if ($vendor !== 'all') {
-        $sql .= " AND VA.B002200CVE = ?";
-        $params[] = $vendor;
-    }
-    
-    $sql .= " ORDER BY VA.B002200FEC DESC";
-    
-    $stmt = executeQuery($conn, $sql, $params);
-    $salesData = [];
-    $lastBillingDate = null;
-    
-    while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
-        // Limpiar y formatear datos
-        $row['total'] = floatval($row['total'] ?? 0);
-        $row['kg'] = floatval($row['kg'] ?? 0);
-        $row['quantity'] = intval($row['quantity'] ?? 0);
-        $row['unitPrice'] = $row['quantity'] > 0 ? $row['total'] / $row['quantity'] : 0;
+    if ($action === 'get_sales_data') {
+        $year = $_POST['year'] ?? date('Y');
+        $month = $_POST['month'] ?? date('m');
+        $vendor = $_POST['vendor'] ?? 'all';
         
-        $salesData[] = $row;
+        // CONSULTA MEJORADA USANDO VENTA_ACUMULADA
+        $sql = "SELECT
+            VENTA_ACUMULADA.B002200CVE as vendor,
+            VENTA_ACUMULADA.B002201CPR as product,
+            VENTA_ACUMULADA.KILO as kg,
+            VENTA_ACUMULADA.UNIDAD_VENDIDA as quantity,
+            VENTA_ACUMULADA.TOTAL_VTA_DIVISA_DES as total,
+            VENTA_ACUMULADA.CAJAS_ESTADISTICAS as boxes,
+            VENTA_ACUMULADA.MES as month,
+            VENTA_ACUMULADA.ANNO as year,
+            -- VENTA_ACUMULADA.B002201CLS as product_class,
+            VENTA_ACUMULADA.B002200RSO as customer_name,
+            VENTA_ACUMULADA.B002200CCL as customer_code,
+            CONVERT(VARCHAR(10), VENTA_ACUMULADA.B002200FEC, 103) as fecha_factura
+
+            
+        FROM dbo.VENTA_ACUMULADA
+        WHERE VENTA_ACUMULADA.ANNO = '2025' AND VENTA_ACUMULADA.MES = '09'
+        AND VENTA_ACUMULADA.B002200CVE NOT IN ('01', '')"; // FILTRO PARA EXCLUIR VENDEDORES 01 Y EN BLANCO
         
-        // Obtener última fecha
-        if (!empty($row['date'])) {
-            if (!$lastBillingDate || $row['date'] > $lastBillingDate) {
-                $lastBillingDate = $row['date'];
+        $params = [$year, $month];
+        
+        if ($vendor !== 'all') {
+            $sql .= " AND VENTA_ACUMULADA.B002200CVE = ?";
+            $params[] = $vendor;
+        }
+        
+        $sql .= " ORDER BY vendor, customer_code";
+        
+        $stmt = sqlsrv_query($conn, $sql, $params);
+        
+        if ($stmt === false) {
+            echo json_encode(["success" => false, "message" => "Error en consulta: " . print_r(sqlsrv_errors(), true)]);
+            exit();
+        }
+        
+        // Procesar resultados
+        $salesData = [];
+        $lastBillingDate = null;
+        
+        while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
+            $salesData[] = $row;
+            
+            // Obtener la última fecha de facturación
+            if (isset($row['fecha_factura']) && !empty($row['fecha_factura'])) {
+                $currentDate = $row['fecha_factura'];
+                
+                // Si es la primera fecha o es más reciente que la almacenada
+                if (!$lastBillingDate || $currentDate > $lastBillingDate) {
+                    $lastBillingDate = $currentDate;
+                }
             }
         }
+        
+// CONSULTA ESPECÍFICA PARA OBTENER LA ÚLTIMA FECHA DE FACTURACIÓN
+// Si no encontramos fecha en los datos anteriores, hacemos una consulta específica
+if (!$lastBillingDate) {
+            // $lastDateSql = "SELECT MAX(B002200FEC) as ultima_fecha                            FROM dbo.VENTA_ACUMULADA                            WHERE ANNO = ? AND MES = ?                           AND B002200CVE NOT IN ('01', '')";
+
+// ... dentro de la acción 'get_sales_data' ...
+
+// CONSULTA ESPECÍFICA PARA OBTENER LA ÚLTIMA FECHA DE FACTURACIÓN
+$lastDateSql = "SELECT 
+               DAY(MAX(B002200FEC)) as dia,
+               MONTH(MAX(B002200FEC)) as mes, 
+               YEAR(MAX(B002200FEC)) as anno
+               FROM dbo.VENTA_ACUMULADA 
+               WHERE ANNO = ? AND MES = ?
+               AND B002200CVE NOT IN ('01', '')";
+               
+$lastDateParams = [$year, $month];
+$lastDateStmt = sqlsrv_query($conn, $lastDateSql, $lastDateParams);
+
+$lastBillingDate = null;
+if ($lastDateStmt !== false) {
+    $lastDateRow = sqlsrv_fetch_array($lastDateStmt, SQLSRV_FETCH_ASSOC);
+    if ($lastDateRow && $lastDateRow['ultima_fecha']) {
+        $lastBillingDate = $lastDateRow['ultima_fecha'];
     }
-    
-    sqlsrv_free_stmt($stmt);
-    return ['sales' => $salesData, 'last_date' => $lastBillingDate];
 }
 
-// Función para obtener cuotas
-function getQuotasData($conn, $year, $month, $vendor = 'all') {
-    $sql = "SELECT * FROM CUOTAS_VENDEDORES WHERE ANNO = ? AND MES = ?";
-    $params = [$year, $month];
+// También verificar en los datos de venta por si hay fechas más recientes
+while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
+    $salesData[] = $row;
     
-    if ($vendor !== 'all') {
-        $sql .= " AND CODIGO_VENDEDOR = ?";
-        $params[] = $vendor;
+    if (isset($row['fecha_factura']) && !empty($row['fecha_factura'])) {
+        $currentDate = $row['fecha_factura'];
+        
+        if (!$lastBillingDate || $currentDate > $lastBillingDate) {
+            $lastBillingDate = $currentDate;
+        }
     }
-    
-    $sql .= " ORDER BY CODIGO_VENDEDOR";
-    
-    try {
-        $stmt = executeQuery($conn, $sql, $params);
+}
+
+// Si aún no tenemos fecha, usar la fecha actual como fallback
+if (!$lastBillingDate) {
+    $lastBillingDate = date('Y-m-d');
+}
+
+}
+// ... resto del código ...
+
+// ... resto del código ...
+        
+        // Obtener cuotas generales de vendedores
+        $quotasSql = "SELECT * FROM CUOTAS_VENDEDORES WHERE ANNO = ? AND MES = ?";
+        $quotaParams = [$year, $month];
+        
+        if ($vendor !== 'all') {
+            $quotasSql .= " AND CODIGO_VENDEDOR = ?";
+            $quotaParams[] = $vendor;
+        }
+        
+        $quotasSql .= " ORDER BY CODIGO_VENDEDOR";
+        
+        $quotasStmt = sqlsrv_query($conn, $quotasSql, $quotaParams);
         $quotasData = [];
         
-        while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
-            $quotasData[] = $row;
+        if ($quotasStmt !== false) {
+            while ($row = sqlsrv_fetch_array($quotasStmt, SQLSRV_FETCH_ASSOC)) {
+                $quotasData[] = $row;
+            }
         }
         
-        sqlsrv_free_stmt($stmt);
-        return $quotasData;
-    } catch (Exception $e) {
-        // Si la tabla no existe, retornar array vacío
-        return [];
-    }
-}
-
-// Función para obtener cuotas por categoría
-function getClassQuotasData($conn, $year, $month, $vendor = 'all') {
-    $sql = "SELECT * FROM CUOTAS_CLASES_PRODUCTO WHERE ANNO = ? AND MES = ?";
-    $params = [$year, $month];
-    
-    if ($vendor !== 'all') {
-        $sql .= " AND CODIGO_VENDEDOR = ?";
-        $params[] = $vendor;
-    }
-    
-    $sql .= " ORDER BY CODIGO_VENDEDOR, CLASE_PRODUCTO";
-    
-    try {
-        $stmt = executeQuery($conn, $sql, $params);
+        // Obtener cuotas por clases de producto
+        $classQuotasSql = "SELECT * FROM CUOTAS_CLASES_PRODUCTO WHERE ANNO = ? AND MES = ?";
+        $classQuotaParams = [$year, $month];
+        
+        if ($vendor !== 'all') {
+            $classQuotasSql .= " AND CODIGO_VENDEDOR = ?";
+            $classQuotaParams[] = $vendor;
+        }
+        
+        $classQuotasSql .= " ORDER BY CODIGO_VENDEDOR, CLASE_PRODUCTO";
+        
+        $classQuotasStmt = sqlsrv_query($conn, $classQuotasSql, $classQuotaParams);
         $classQuotasData = [];
         
-        while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
-            $classQuotasData[] = $row;
+        if ($classQuotasStmt !== false) {
+            while ($row = sqlsrv_fetch_array($classQuotasStmt, SQLSRV_FETCH_ASSOC)) {
+                $classQuotasData[] = $row;
+            }
         }
         
-        sqlsrv_free_stmt($stmt);
-        return $classQuotasData;
-    } catch (Exception $e) {
-        // Si la tabla no existe, retornar array vacío
-        return [];
-    }
-}
+        // Obtener lista de vendedores desde VENTA_ACUMULADA (excluyendo 01 y en blanco)
+        $vendorsSql = "SELECT DISTINCT VENTA_ACUMULADA.B002200CVE as vendor 
+                       FROM dbo.VENTA_ACUMULADA 
+                       WHERE VENTA_ACUMULADA.ANNO = ? AND VENTA_ACUMULADA.MES = ?
+                       AND VENTA_ACUMULADA.B002200CVE NOT IN ('01', '')
+                       ORDER BY vendor";
+        
+        $vendorsStmt = sqlsrv_query($conn, $vendorsSql, [$year, $month]);
+        $vendorsList = [];
+        
+        if ($vendorsStmt !== false) {
+            while ($row = sqlsrv_fetch_array($vendorsStmt, SQLSRV_FETCH_ASSOC)) {
+                $vendorsList[] = $row['vendor'];
+            }
+        }
+        
+        echo json_encode([
+            "success" => true,
+            "sales" => $salesData, 
+            "quotas" => $quotasData,
+            "class_quotas" => $classQuotasData,
+            "vendors" => $vendorsList,
+            "last_billing_date" => $lastBillingDate  // Agregamos la última fecha de facturación
+        ]);
+        
+        // Liberar recursos
+        if ($stmt) sqlsrv_free_stmt($stmt);
+        if ($quotasStmt) sqlsrv_free_stmt($quotasStmt);
+        if ($classQuotasStmt) sqlsrv_free_stmt($classQuotasStmt);
+        if ($vendorsStmt) sqlsrv_free_stmt($vendorsStmt);
+        
+    } elseif ($action === 'get_last_billing_date') {
+        // Acción específica para obtener solo la última fecha de facturación
+        $year = $_POST['year'] ?? date('Y');
+        $month = $_POST['month'] ?? date('m');
+        $vendor = $_POST['vendor'] ?? 'all';
+        
+        $sql = "SELECT MAX(CONVERT(VARCHAR(10), B002200FEC, 120)) as ultima_fecha 
+                FROM dbo.VENTA_ACUMULADA 
+                WHERE ANNO = ? AND MES = ?
+                AND B002200CVE NOT IN ('01', '')";
+        
+        $params = [$year, $month];
+        
+        if ($vendor !== 'all') {
+            $sql .= " AND B002200CVE = ?";
+            $params[] = $vendor;
+        }
+        
+        $stmt = sqlsrv_query($conn, $sql, $params);
+        
+        if ($stmt === false) {
+            echo json_encode(["success" => false, "message" => "Error en consulta: " . print_r(sqlsrv_errors(), true)]);
+            exit();
+        }
+        
+        $lastBillingDate = null;
+        $row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC);
+        if ($row && $row['ultima_fecha']) {
+            $lastBillingDate = $row['ultima_fecha'];
+        }
+        
+        echo json_encode([
+            "success" => true,
+            "last_billing_date" => $lastBillingDate,
+            "year" => $year,
+            "month" => $month,
+            "vendor" => $vendor
+        ]);
+        
+        if ($stmt) sqlsrv_free_stmt($stmt);
 
-// Función para obtener lista de vendedores
-function getVendorsList($conn, $year, $month) {
-    $sql = "SELECT DISTINCT B002200CVE as vendor 
-            FROM VENTA_ACUMULADA 
-            WHERE ANNO = ? AND MES = ?
-            AND B002200CVE NOT IN ('01', '')
-            ORDER BY vendor";
-    
-    $stmt = executeQuery($conn, $sql, [$year, $month]);
-    $vendorsList = [];
-    
-    while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
-        $vendorsList[] = $row['vendor'];
-    }
-    
-    sqlsrv_free_stmt($stmt);
-    return $vendorsList;
-}
 
-// MANEJO PRINCIPAL DE PETICIONES
-try {
-    // Verificar conexión
-    if ($conn === false) {
-        sendResponse(false, [], 'No se pudo conectar a la base de datos. Verifique la configuración.');
-    }
-
-    $action = $_POST['action'] ?? $_GET['action'] ?? '';
-    
-    // Log de la acción recibida (para debugging)
-    error_log("API Action: " . $action . " - Empresa: " . ($_SESSION['empresa_seleccionada'] ?? 'A'));
-    
-    switch($action) {
-        case 'get_sales_data':
-            $year = $_POST['year'] ?? date('Y');
-            $month = $_POST['month'] ?? date('m');
-            $vendor = $_POST['vendor'] ?? 'all';
-            
-            // Validar parámetros
-            if (!is_numeric($year) || !is_numeric($month)) {
-                sendResponse(false, [], "Parámetros inválidos: año=$year, mes=$month");
-            }
-            
-            // Obtener todos los datos
-            $salesResult = getSalesData($conn, $year, $month, $vendor);
-            $quotasData = getQuotasData($conn, $year, $month, $vendor);
-            $classQuotasData = getClassQuotasData($conn, $year, $month, $vendor);
-            $vendorsList = getVendorsList($conn, $year, $month);
-            
-            sendResponse(true, [
-                "sales" => $salesResult['sales'],
-                "quotas" => $quotasData,
-                "class_quotas" => $classQuotasData,
-                "vendors" => $vendorsList,
-                "last_billing_date" => $salesResult['last_date'] ?: "No disponible",
-                "filters" => [
-                    "year" => $year,
-                    "month" => $month,
-                    "vendor" => $vendor
-                ]
-            ], "Datos cargados correctamente: " . count($salesResult['sales']) . " registros");
-            break;
-            
-        case 'save_quota':
-            $required = ['vendor', 'year', 'month'];
-            foreach ($required as $field) {
-                if (empty($_POST[$field])) {
-                    sendResponse(false, [], "Campo requerido faltante: $field");
-                }
-            }
-            
-            $vendor = $_POST['vendor'];
-            $year = $_POST['year'];
-            $month = $_POST['month'];
-            $amount = floatval($_POST['amount'] ?? 0);
-            $boxes = intval($_POST['boxes'] ?? 0);
-            $kilos = floatval($_POST['kilos'] ?? 0);
-            $user = 'Sistema';
-            
-            // Verificar si ya existe
-            $checkSql = "SELECT COUNT(*) as existe FROM CUOTAS_VENDEDORES 
-                         WHERE CODIGO_VENDEDOR = ? AND ANNO = ? AND MES = ?";
-            $checkStmt = executeQuery($conn, $checkSql, [$vendor, $year, $month]);
-            $row = sqlsrv_fetch_array($checkStmt, SQLSRV_FETCH_ASSOC);
-            $existe = $row['existe'] > 0;
-            sqlsrv_free_stmt($checkStmt);
-            
-            if ($existe) {
-                // Actualizar
-                $updateSql = "UPDATE CUOTAS_VENDEDORES 
-                              SET CUOTA_DIVISA = ?, CUOTA_CAJAS = ?, CUOTA_KILOS = ?, 
-                                  FECHA_ACTUALIZACION = GETDATE(), USUARIO_ACTUALIZACION = ?
-                              WHERE CODIGO_VENDEDOR = ? AND ANNO = ? AND MES = ?";
-                executeQuery($conn, $updateSql, [$amount, $boxes, $kilos, $user, $vendor, $year, $month]);
-                sendResponse(true, [], "Cuota actualizada correctamente");
-            } else {
-                // Insertar
-                $insertSql = "INSERT INTO CUOTAS_VENDEDORES 
-                             (CODIGO_VENDEDOR, ANNO, MES, CUOTA_DIVISA, CUOTA_CAJAS, CUOTA_KILOS, USUARIO_ACTUALIZACION)
-                             VALUES (?, ?, ?, ?, ?, ?, ?)";
-                executeQuery($conn, $insertSql, [$vendor, $year, $month, $amount, $boxes, $kilos, $user]);
-                sendResponse(true, [], "Cuota creada correctamente");
-            }
-            break;
-            
-        case 'save_class_quota':
-            $required = ['vendor', 'year', 'month', 'product_class'];
-            foreach ($required as $field) {
-                if (empty($_POST[$field])) {
-                    sendResponse(false, [], "Campo requerido faltante: $field");
-                }
-            }
-            
-            $vendor = $_POST['vendor'];
-            $year = $_POST['year'];
-            $month = $_POST['month'];
-            $productClass = $_POST['product_class'];
-            $amount = floatval($_POST['amount'] ?? 0);
-            $activacion = floatval($_POST['activacion'] ?? 0);
-            $user = 'Sistema';
-            
-            // Verificar si ya existe
-            $checkSql = "SELECT COUNT(*) as existe FROM CUOTAS_CLASES_PRODUCTO 
-                         WHERE CODIGO_VENDEDOR = ? AND ANNO = ? AND MES = ? AND CLASE_PRODUCTO = ?";
-            $checkStmt = executeQuery($conn, $checkSql, [$vendor, $year, $month, $productClass]);
-            $row = sqlsrv_fetch_array($checkStmt, SQLSRV_FETCH_ASSOC);
-            $existe = $row['existe'] > 0;
-            sqlsrv_free_stmt($checkStmt);
-            
-            if ($existe) {
-                // Actualizar
-                $updateSql = "UPDATE CUOTAS_CLASES_PRODUCTO 
-                              SET CUOTA_DIVISA = ?, CUOTA_ACTIVACION = ?, 
-                                  FECHA_ACTUALIZACION = GETDATE(), USUARIO_ACTUALIZACION = ?
-                              WHERE CODIGO_VENDEDOR = ? AND ANNO = ? AND MES = ? AND CLASE_PRODUCTO = ?";
-                executeQuery($conn, $updateSql, [$amount, $activacion, $user, $vendor, $year, $month, $productClass]);
-                sendResponse(true, [], "Cuota por categoría actualizada correctamente");
-            } else {
-                // Insertar
-                $insertSql = "INSERT INTO CUOTAS_CLASES_PRODUCTO 
-                             (CODIGO_VENDEDOR, ANNO, MES, CLASE_PRODUCTO, CUOTA_DIVISA, CUOTA_ACTIVACION, USUARIO_ACTUALIZACION)
-                             VALUES (?, ?, ?, ?, ?, ?, ?)";
-                executeQuery($conn, $insertSql, [$vendor, $year, $month, $productClass, $amount, $activacion, $user]);
-                sendResponse(true, [], "Cuota por categoría creada correctamente");
-            }
-            break;
-            
-        case 'delete_quota':
-            $vendor = $_POST['vendor'] ?? '';
-            $year = $_POST['year'] ?? '';
-            $month = $_POST['month'] ?? '';
-            
-            if (empty($vendor) || empty($year) || empty($month)) {
-                sendResponse(false, [], "Datos incompletos para eliminar cuota");
-            }
-            
-            $deleteSql = "DELETE FROM CUOTAS_VENDEDORES 
+    } elseif ($action === 'save_quota') {
+        $vendor = $_POST['vendor'] ?? '';
+        $year = $_POST['year'] ?? date('Y');
+        $month = $_POST['month'] ?? date('m');
+        $amount = $_POST['amount'] ?? 0;
+        $boxes = $_POST['boxes'] ?? 0;
+        $kilos = $_POST['kilos'] ?? 0;
+        $user = 'Sistema';
+        
+        // Verificar si ya existe una cuota
+        $checkSql = "SELECT * FROM CUOTAS_VENDEDORES 
+                     WHERE CODIGO_VENDEDOR = ? AND ANNO = ? AND MES = ?";
+        $checkParams = [$vendor, $year, $month];
+        $checkStmt = sqlsrv_query($conn, $checkSql, $checkParams);
+        
+        if ($checkStmt && sqlsrv_has_rows($checkStmt)) {
+            // Actualizar cuota existente
+            $updateSql = "UPDATE CUOTAS_VENDEDORES 
+                          SET CUOTA_DIVISA = ?, CUOTA_CAJAS = ?, CUOTA_KILOS = ?, 
+                              FECHA_ACTUALIZACION = GETDATE(), USUARIO_ACTUALIZACION = ?
                           WHERE CODIGO_VENDEDOR = ? AND ANNO = ? AND MES = ?";
-            executeQuery($conn, $deleteSql, [$vendor, $year, $month]);
-            sendResponse(true, [], "Cuota eliminada correctamente");
-            break;
+            $updateParams = [$amount, $boxes, $kilos, $user, $vendor, $year, $month];
+            $updateStmt = sqlsrv_query($conn, $updateSql, $updateParams);
             
-        case 'delete_class_quota':
-            $vendor = $_POST['vendor'] ?? '';
-            $year = $_POST['year'] ?? '';
-            $month = $_POST['month'] ?? '';
-            $productClass = $_POST['product_class'] ?? '';
-            
-            if (empty($vendor) || empty($year) || empty($month) || empty($productClass)) {
-                sendResponse(false, [], "Datos incompletos para eliminar cuota por categoría");
+            if ($updateStmt === false) {
+                echo json_encode(["success" => false, "message" => "Error al actualizar cuota: " . print_r(sqlsrv_errors(), true)]);
+                exit();
             }
             
-            $deleteSql = "DELETE FROM CUOTAS_CLASES_PRODUCTO 
+            echo json_encode(["success" => true, "message" => "Cuota actualizada correctamente"]);
+        } else {
+            // Insertar nueva cuota
+            $insertSql = "INSERT INTO CUOTAS_VENDEDORES 
+                         (CODIGO_VENDEDOR, ANNO, MES, CUOTA_DIVISA, CUOTA_CAJAS, CUOTA_KILOS, USUARIO_ACTUALIZACION)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)";
+            $insertParams = [$vendor, $year, $month, $amount, $boxes, $kilos, $user];
+            $insertStmt = sqlsrv_query($conn, $insertSql, $insertParams);
+            
+            if ($insertStmt === false) {
+                echo json_encode(["success" => false, "message" => "Error al insertar cuota: " . print_r(sqlsrv_errors(), true)]);
+                exit();
+            }
+            
+            echo json_encode(["success" => true, "message" => "Cuota creada correctamente"]);
+        }
+        
+    } elseif ($action === 'save_class_quota') {
+        // Nueva función para guardar cuotas por clase de producto
+        $vendor = $_POST['vendor'] ?? '';
+        $year = $_POST['year'] ?? date('Y');
+        $month = $_POST['month'] ?? date('m');
+        $productClass = $_POST['product_class'] ?? '';
+        $amount = $_POST['amount'] ?? 0;
+        $boxes = $_POST['boxes'] ?? 0;
+        $kilos = $_POST['kilos'] ?? 0;
+        $user = 'Sistema';
+        
+        // Verificar si ya existe una cuota para esta clase
+        $checkSql = "SELECT * FROM CUOTAS_CLASES_PRODUCTO 
+                     WHERE CODIGO_VENDEDOR = ? AND ANNO = ? AND MES = ? AND CLASE_PRODUCTO = ?";
+        $checkParams = [$vendor, $year, $month, $productClass];
+        $checkStmt = sqlsrv_query($conn, $checkSql, $checkParams);
+        
+        if ($checkStmt && sqlsrv_has_rows($checkStmt)) {
+            // Actualizar cuota existente
+            $updateSql = "UPDATE CUOTAS_CLASES_PRODUCTO 
+                          SET CUOTA_DIVISA = ?, CUOTA_CAJAS = ?, CUOTA_KILOS = ?, 
+                              FECHA_ACTUALIZACION = GETDATE(), USUARIO_ACTUALIZACION = ?
                           WHERE CODIGO_VENDEDOR = ? AND ANNO = ? AND MES = ? AND CLASE_PRODUCTO = ?";
-            executeQuery($conn, $deleteSql, [$vendor, $year, $month, $productClass]);
-            sendResponse(true, [], "Cuota por categoría eliminada correctamente");
-            break;
+            $updateParams = [$amount, $boxes, $kilos, $user, $vendor, $year, $month, $productClass];
+            $updateStmt = sqlsrv_query($conn, $updateSql, $updateParams);
             
-        case 'change_company':
-            $empresa = $_POST['empresa'] ?? 'A';
-            $_SESSION['empresa_seleccionada'] = $empresa;
+            if ($updateStmt === false) {
+                echo json_encode(["success" => false, "message" => "Error al actualizar cuota por clase: " . print_r(sqlsrv_errors(), true)]);
+                exit();
+            }
             
-            $empresasNombres = [
-                'A' => 'CSB',
-                'B' => 'MAXI', 
-                'C' => 'MERIDA'
-            ];
+            echo json_encode(["success" => true, "message" => "Cuota por clase actualizada correctamente"]);
+        } else {
+            // Insertar nueva cuota por clase
+            $insertSql = "INSERT INTO CUOTAS_CLASES_PRODUCTO 
+                         (CODIGO_VENDEDOR, ANNO, MES, CLASE_PRODUCTO, CUOTA_DIVISA, CUOTA_CAJAS, CUOTA_KILOS, USUARIO_ACTUALIZACION)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+            $insertParams = [$vendor, $year, $month, $productClass, $amount, $boxes, $kilos, $user];
+            $insertStmt = sqlsrv_query($conn, $insertSql, $insertParams);
             
-            sendResponse(true, [], "Empresa cambiada a " . ($empresasNombres[$empresa] ?? 'Desconocida'));
-            break;
+            if ($insertStmt === false) {
+                echo json_encode(["success" => false, "message" => "Error al insertar cuota por clase: " . print_r(sqlsrv_errors(), true)]);
+                exit();
+            }
             
-        case 'test_connection':
-            // Prueba simple de conexión
-            $test_sql = "SELECT TOP 1 B002200CVE as vendor FROM VENTA_ACUMULADA";
-            $test_stmt = executeQuery($conn, $test_sql);
-            $test_data = sqlsrv_fetch_array($test_stmt, SQLSRV_FETCH_ASSOC);
-            sqlsrv_free_stmt($test_stmt);
-            
-            sendResponse(true, [
-                'connection' => 'success',
-                'test_data' => $test_data,
-                'server' => 'SRV-PROFIT\CATA',
-                'database' => $GLOBALS['basededatos'] ?? 'REPORT',
-                'empresa' => $_SESSION['empresa_seleccionada'] ?? 'A'
-            ], "Conexión de prueba exitosa");
-            break;
-            
-        default:
-            sendResponse(false, [], "Acción no válida: $action");
+            echo json_encode(["success" => true, "message" => "Cuota por clase creada correctamente"]);
+        }
+        
+    } elseif ($action === 'delete_quota') {
+        $vendor = $_POST['vendor'] ?? '';
+        $year = $_POST['year'] ?? date('Y');
+        $month = $_POST['month'] ?? date('m');
+        
+        $deleteSql = "DELETE FROM CUOTAS_VENDEDORES 
+                      WHERE CODIGO_VENDEDOR = ? AND ANNO = ? AND MES = ?";
+        $deleteParams = [$vendor, $year, $month];
+        $deleteStmt = sqlsrv_query($conn, $deleteSql, $deleteParams);
+        
+        if ($deleteStmt === false) {
+            echo json_encode(["success" => false, "message" => "Error al eliminar cuota: " . print_r(sqlsrv_errors(), true)]);
+            exit();
+        }
+        
+        echo json_encode(["success" => true, "message" => "Cuota eliminada correctamente"]);
+        
+    } elseif ($action === 'delete_class_quota') {
+        // Nueva función para eliminar cuotas por clase de producto
+        $vendor = $_POST['vendor'] ?? '';
+        $year = $_POST['year'] ?? date('Y');
+        $month = $_POST['month'] ?? date('m');
+        $productClass = $_POST['product_class'] ?? '';
+        
+        $deleteSql = "DELETE FROM CUOTAS_CLASES_PRODUCTO 
+                      WHERE CODIGO_VENDEDOR = ? AND ANNO = ? AND MES = ? AND CLASE_PRODUCTO = ?";
+        $deleteParams = [$vendor, $year, $month, $productClass];
+        $deleteStmt = sqlsrv_query($conn, $deleteSql, $deleteParams);
+        
+        if ($deleteStmt === false) {
+            echo json_encode(["success" => false, "message" => "Error al eliminar cuota por clase: " . print_r(sqlsrv_errors(), true)]);
+            exit();
+        }
+        
+        echo json_encode(["success" => true, "message" => "Cuota por clase eliminada correctamente"]);
+        
+    } elseif ($action === 'change_company') {
+        echo json_encode(["success" => true, "message" => "Empresa cambiada a $empresaSeleccionada"]);
+        
+    } else {
+        echo json_encode(["success" => false, "message" => "Acción no válida"]);
     }
 
 } catch (Exception $e) {
-    sendResponse(false, [], "Error: " . $e->getMessage());
-} finally {
-    // Cerrar conexión
-    if (isset($conn) && $conn !== false) {
-        sqlsrv_close($conn);
-    }
+    echo json_encode([
+        "success" => false, 
+        "message" => "Excepción: " . $e->getMessage()
+    ]);
+}
+
+// Cerrar conexión
+if (isset($conn) && $conn !== false) {
+    sqlsrv_close($conn);
 }
 ?>
