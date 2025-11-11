@@ -159,9 +159,9 @@
             color: var(--primary-color);
         }
 
-        .charts-container {
-            display: grid;
-            grid-template-columns: 1fr;
+      .charts-container {
+            display: flex;
+            flex-direction: column;
             gap: 15px;
             margin-bottom: 15px;
         }
@@ -171,6 +171,7 @@
             border-radius: 10px;
             padding: 15px;
             box-shadow: var(--card-shadow);
+            width: 100%;
         }
 
         .chart-title {
@@ -596,4 +597,46 @@
         }
 
 
-  
+  /* Estilos para el contenedor del resumen de vendedores */
+.sales-summary-container {
+    max-height: 900px;
+    overflow-y: auto;
+    border: 1px solid #eee;
+    border-radius: 5px;
+}
+
+.sales-summary-container table {
+    margin-bottom: 0;
+}
+
+.sales-summary-container thead th {
+    position: sticky;
+    top: 0;
+    background-color: var(--light-color);
+    z-index: 10;
+}
+
+/* Asegurar que la tabla ocupe todo el ancho */
+.sales-summary-container .data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+/* Mejorar la legibilidad de las filas */
+.sales-summary-container .data-table tr:nth-child(even) {
+    background-color: #f8f9fa;
+}
+
+.sales-summary-container .data-table tr:hover {
+    background-color: rgba(52, 152, 219, 0.1);
+}
+
+/* Hacer la tabla más compacta para mostrar más filas */
+.sales-summary-container .data-table td,
+.sales-summary-container .data-table th {
+    padding: 8px 12px;
+    font-size: 0.9rem;
+}
+
+
+

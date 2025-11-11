@@ -12,6 +12,9 @@
     <div class="dashboard-container">
         <div class="dashboard-header">
             <div class="header-title">
+                <div class="debug-info" id="debug-info">
+                    Estado de conexión: Iniciando...
+                </div>
                 <h1>Dashboard de Ventas - API</h1>
                 <div class="time-display" id="current-time">Cargando...</div>
                  <div class="last-billing-display">
@@ -37,8 +40,6 @@
                     <option value="all">Todos los vendedores</option>
                 </select>
             </div>
-
-
             
             <div class="filter-item">
                 <label for="year-select">Año</label>
@@ -73,45 +74,54 @@
             </div>
         </div>
         
-        <div class="charts-container">
-            <div class="chart-card">
-                <h3 class="chart-title">Cumplimiento de Metas</h3>
-                <div class="half-doughnut-container">
-                    <canvas id="halfDoughnutChart"></canvas>
-                    <div class="half-doughnut-value" id="achievement-percentage">0%</div>
-                </div>
-                <div id="chart-additional-info" class="chart-info-panel">
-                    <div class="chart-info-item">Ventas Acumuladas: <span class="chart-info-value" id="accumulated-sales">$0.00</span></div>
-                    <div class="chart-info-item">Meta: <span class="chart-info-value" id="sales-target">$0.00</span></div>
-                    <div class="chart-info-item">Faltante: <span class="chart-info-value" id="remaining-amount">$0.00</span></div>
-                </div>
-                
-                <div class="vendor-selector">
-                    <button class="vendor-btn active" data-vendor="all">Todos</button>
-                </div>
-            </div>
-            
-            <div class="chart-card">
-                <h3 class="chart-title">Resumen de Ventas por Vendedor</h3>
-                <div id="sales-summary" style="height: 300px; overflow-y: auto;">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Vendedor</th>
-                                <th>Ventas</th>
-                                <th>Meta</th>
-                                <th>% Cumplimiento</th>
-                            </tr>
-                        </thead>
-                        <tbody id="sales-summary-body">
-                            <tr>
-                                <td colspan="4" class="loading">Cargando datos...</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+       <div class="charts-container">
+    <!-- Cumplimiento de Metas (ARRIBA) -->
+    <div class="chart-card">
+        <h3 class="chart-title">Cumplimiento de Metas</h3>
+        <div class="half-doughnut-container">
+            <canvas id="halfDoughnutChart"></canvas>
+            <div class="half-doughnut-value" id="achievement-percentage">0%</div>
         </div>
+        <div id="chart-additional-info" class="chart-info-panel">
+            <div class="chart-info-item">Ventas Acumuladas: <span class="chart-info-value" id="accumulated-sales">$0.00</span></div>
+            <div class="chart-info-item">Meta: <span class="chart-info-value" id="sales-target">$0.00</span></div>
+            <div class="chart-info-item">Faltante: <span class="chart-info-value" id="remaining-amount">$0.00</span></div>
+        </div>
+        
+        <div class="vendor-selector">
+            <button class="vendor-btn active" data-vendor="all">Todos</button>
+        </div>
+    </div>
+    
+    <!-- Resumen de Ventas por Vendedor (DEBAJO) -->
+   <div class="chart-card">
+    <h3 class="chart-title">Resumen de Ventas por Vendedor</h3>
+    <div id="sales-summary" class="sales-summary-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Vendedor</th>
+                    <th>Ventas</th>
+                    <th>Meta</th>
+                    <th>% Cumplimiento</th>
+                    <th>Kilos Pepsico</th>
+                    <th>Meta Kilos</th>
+                    <th>% Cumplimiento</th>
+                    <th>Cajas</th>
+                    <th>Meta Cajas</th>
+                    <th>% Cumplimiento</th>
+                </tr>
+            </thead>
+            <tbody id="sales-summary-body">
+                <tr>
+                    <td colspan="5" class="loading">Cargando datos...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+</div>
+
         
         <div class="tabs">
         <div class="tab active" data-tab="performance">Rendimiento</div>    
@@ -396,16 +406,18 @@ client.newCall(request).enqueue(object : Callback {
         }
     ],
     "vendors": ["VEND01", "VEND02"],
-    "categories": ["CAT001", "CAT002"]
+    "categories": ["CAT001", "CAT002"],
+    "kilos_clase_01": {
+        "VEND01": 150.5,
+        "VEND02": 200.3
+    }
 }
                     </pre>
                 </div>
             </div>
         </div>
 
-        <div class="debug-info" id="debug-info">
-            Estado de conexión: Iniciando...
-        </div>
+     
     </div>
 
     <script src="js/script.js"></script>
